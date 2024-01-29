@@ -13,7 +13,7 @@ using static WTelegram.Compat;
 
 namespace WTelegram
 {
-	internal static class Encryption
+	public static class Encryption
 	{
 		private static readonly Dictionary<long, RSAPublicKey> PublicKeys = new();
 		internal static readonly RNGCryptoServiceProvider RNG = new();
@@ -275,7 +275,7 @@ j4WcDuXc2CTHgH8gFTNhp/Y8/SpDOhvn9QIDAQAB
 -----END RSA PUBLIC KEY-----");
 		}
 
-		internal static byte[] EncryptDecryptMessage(Span<byte> input, bool encrypt, int x, byte[] authKey, byte[] msgKey, int msgKeyOffset, SHA256 sha256)
+		public static byte[] EncryptDecryptMessage(Span<byte> input, bool encrypt, int x, byte[] authKey, byte[] msgKey, int msgKeyOffset, SHA256 sha256)
 		{
 			// first, construct AES key & IV
 			byte[] aes_key = new byte[32], aes_iv = new byte[32];
@@ -296,7 +296,7 @@ j4WcDuXc2CTHgH8gFTNhp/Y8/SpDOhvn9QIDAQAB
 			return AES_IGE_EncryptDecrypt(input, aes_key, aes_iv, encrypt);
 		}
 
-		internal static byte[] AES_IGE_EncryptDecrypt(Span<byte> input, byte[] aes_key, byte[] aes_iv, bool encrypt)
+		public static byte[] AES_IGE_EncryptDecrypt(Span<byte> input, byte[] aes_key, byte[] aes_iv, bool encrypt)
 		{
 			if (input.Length % 16 != 0) throw new WTException("AES_IGE input size not divisible by 16");
 
@@ -318,7 +318,7 @@ j4WcDuXc2CTHgH8gFTNhp/Y8/SpDOhvn9QIDAQAB
 		}
 
 #if OBFUSCATION
-		internal class AesCtr : IDisposable
+		public class AesCtr : IDisposable
 		{
 			readonly ICryptoTransform _encryptor;
 			readonly byte[] _ivec;
