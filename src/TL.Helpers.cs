@@ -370,22 +370,6 @@ namespace TL
 		public override int Height => -1;
 		public override int FileSize => bytes.Length;
 	}
-	namespace Layer23
-	{
-		partial class PhotoSize
-		{
-			public override int Width => w;
-			public override int Height => h;
-			public override int FileSize => size;
-		}
-		partial class PhotoCachedSize
-		{
-			public override int Width => w;
-			public override int Height => h;
-			public override int FileSize => bytes.Length;
-		}
-	}
-
 	partial class GeoPoint
 	{
 		public static implicit operator InputGeoPoint(GeoPoint geo) => new() { lat = geo.lat, lon = geo.lon, accuracy_radius = geo.accuracy_radius, flags = (InputGeoPoint.Flags)geo.flags };

@@ -20,13 +20,19 @@ namespace TL
 		internal const uint BadMsgCtor = 0xA7EFF811;
 		internal const uint GZipedCtor = 0x3072CFA1;
 
-		public readonly static Dictionary<uint, Type> Table =
-			(from t in Assembly.GetExecutingAssembly().GetTypes()
-			where t.IsClass && t.Namespace != null && t.Namespace.StartsWith("TL")
-			where t.GetInterfaces().Contains(typeof(IObject))
-			where t.GetCustomAttribute(typeof(TLDefAttribute)) != null
-			select t).ToDictionary(x => ((TLDefAttribute)x.GetCustomAttribute(typeof(TLDefAttribute))).CtorNb, x => x);
-
+		public readonly static Dictionary<(int, uint), Type> Table;
+			
+		static Layer()
+		{
+			Table =(from t in Assembly.GetExecutingAssembly().GetTypes()
+				where t.IsClass && t.Namespace != null && t.Namespace.StartsWith("TL")
+				where t.GetInterfaces().Contains(typeof(IObject))
+				where t.GetCustomAttribute(typeof(TLDefAttribute)) != null
+				select t).ToDictionary(x => (((TLDefAttribute)x.GetCustomAttribute(typeof(TLDefAttribute))).Layer, ((TLDefAttribute)x.GetCustomAttribute(typeof(TLDefAttribute))).CtorNb), x => x);
+			
+			Table.Add((167, 0x7F3B18EA), null);
+		}
+		
 		internal readonly static Dictionary<Type, uint> Nullables = new()
 		{
 			// from TL.MTProto:
@@ -95,7 +101,6 @@ namespace TL
 			[typeof(Help_AppConfig)]                 = 0x7CDE641D, //help.appConfigNotModified
 			[typeof(BotApp)]                         = 0x5DA674B7, //botAppNotModified
 			[typeof(Help_PeerColors)]                = 0x2BA1F5CE, //help.peerColorsNotModified
-			[typeof(DecryptedMessageMedia)]          = 0x089F5C4A, //decryptedMessageMediaEmpty
 		};
 	}
 }

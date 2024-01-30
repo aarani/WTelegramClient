@@ -12,14 +12,20 @@ using System.Text;
 namespace TL
 {
 	public interface IObject { }
-	public interface IMethod<ReturnType> : IObject { }
+	public interface IMethod : IObject { }
 	public interface IPeerResolver { IPeerInfo UserOrChat(Peer peer); }
 
 	[AttributeUsage(AttributeTargets.Class)]
 	public class TLDefAttribute : Attribute
 	{
 		public readonly uint CtorNb;
-		public TLDefAttribute(uint ctorNb) => CtorNb = ctorNb;
+		public readonly int Layer;
+
+		public TLDefAttribute(int layer, uint ctorNb)
+		{
+			CtorNb = ctorNb;
+			Layer = layer;
+		}
 		public bool inheritBefore;
 	}
 
@@ -68,13 +74,13 @@ namespace TL
 			}
 		}
 
-		public static IObject ReadTLObject(this BinaryReader reader, uint ctorNb = 0)
+		public static IObject ReadTLObject(this BinaryReader reader, int layer , uint ctorNb = 0)
 		{
 			if (ctorNb == 0) ctorNb = reader.ReadUInt32();
 			if (ctorNb == Layer.GZipedCtor)
 				using (var gzipReader = new BinaryReader(new GZipStream(new MemoryStream(reader.ReadTLBytes()), CompressionMode.Decompress)))
-					return ReadTLObject(gzipReader);
-			if (!Layer.Table.TryGetValue(ctorNb, out var type))
+					return ReadTLObject(gzipReader, layer);
+			if (!Layer.Table.TryGetValue((layer, ctorNb), out var type))
 				throw new WTelegram.WTException($"Cannot find type for ctor #{ctorNb:x}");
 			if (type == null) return null; // nullable ctor (class meaning is associated with null)
 			var tlDef = type.GetCustomAttribute<TLDefAttribute>();
@@ -86,7 +92,7 @@ namespace TL
 			foreach (var field in fields)
 			{
 				if (((ifFlag = field.GetCustomAttribute<IfFlagAttribute>()) != null) && (flags & (1UL << ifFlag.Bit)) == 0) continue;
-				object value = reader.ReadTLValue(field.FieldType);
+				object value = reader.ReadTLValue(field.FieldType, layer);
 				field.SetValue(obj, value);
 				if (field.FieldType.IsEnum)
 					if (field.Name == "flags") flags = (uint)value;
@@ -129,6 +135,18 @@ namespace TL
 						WriteTLObject(writer, tlObject);
 					else if (type.IsEnum) // needed for Mono (enums in generic types are seen as TypeCode.Object)
 						writer.Write((uint)value);
+					else if (value is Dictionary<long, User> userDict)
+						writer.WriteTLVector(
+							userDict
+							.Select(user => user.Value)
+							.ToArray()
+						);
+					else if (value is Dictionary<long, ChatBase> chatDict)
+						writer.WriteTLVector(
+							chatDict
+							.Select(chat => chat.Value)
+							.ToArray()
+						);
 					else
 						ShouldntBeHere();
 					break;
@@ -138,7 +156,7 @@ namespace TL
 			}
 		}
 
-		internal static object ReadTLValue(this BinaryReader reader, Type type)
+		internal static object ReadTLValue(this BinaryReader reader, Type type, int layer)
 		{
 			switch (Type.GetTypeCode(type))
 			{
@@ -154,7 +172,7 @@ namespace TL
 					{
 						0x997275b5 => true,
 						0xbc799737 => false,
-						Layer.RpcErrorCtor => reader.ReadTLObject(Layer.RpcErrorCtor),
+						Layer.RpcErrorCtor => reader.ReadTLObject(layer, Layer.RpcErrorCtor),
 						var value => throw new WTelegram.WTException($"Invalid boolean value #{value:x}")
 					};
 				case TypeCode.Object:
@@ -163,18 +181,18 @@ namespace TL
 						if (type == typeof(byte[]))
 							return reader.ReadTLBytes();
 						else
-							return reader.ReadTLVector(type);
+							return reader.ReadTLVector(type, layer);
 					}
 					else if (type == typeof(Int128))
 						return new Int128(reader);
 					else if (type == typeof(Int256))
 						return new Int256(reader);
 					else if (type == typeof(Dictionary<long, User>))
-						return reader.ReadTLDictionary<User>();
+						return reader.ReadTLDictionary<User>(layer);
 					else if (type == typeof(Dictionary<long, ChatBase>))
-						return reader.ReadTLDictionary<ChatBase>();
+						return reader.ReadTLDictionary<ChatBase>(layer);
 					else
-						return reader.ReadTLObject();
+						return reader.ReadTLObject(layer);
 				default:
 					ShouldntBeHere();
 					return null;
@@ -212,7 +230,7 @@ namespace TL
 			}
 		}
 
-		internal static Array ReadTLVector(this BinaryReader reader, Type type)
+		internal static Array ReadTLVector(this BinaryReader reader, Type type, int layer )
 		{
 			var elementType = type.GetElementType();
 			uint ctorNb = reader.ReadUInt32();
@@ -222,10 +240,10 @@ namespace TL
 				Array array = (Array)Activator.CreateInstance(type, count);
 				if (elementType.IsEnum)
 					for (int i = 0; i < count; i++)
-						array.SetValue(Enum.ToObject(elementType, reader.ReadTLValue(elementType)), i);
+						array.SetValue(Enum.ToObject(elementType, reader.ReadTLValue(elementType, layer)), i);
 				else
 					for (int i = 0; i < count; i++)
-						array.SetValue(reader.ReadTLValue(elementType), i);
+						array.SetValue(reader.ReadTLValue(elementType, layer), i);
 				return array;
 			}
 			else if (ctorNb < 1024 && !elementType.IsAbstract && elementType.GetCustomAttribute<TLDefAttribute>() is TLDefAttribute attr)
@@ -233,14 +251,14 @@ namespace TL
 				int count = (int)ctorNb;
 				Array array = (Array)Activator.CreateInstance(type, count);
 				for (int i = 0; i < count; i++)
-					array.SetValue(reader.ReadTLObject(attr.CtorNb), i);
+					array.SetValue(reader.ReadTLObject(layer, attr.CtorNb), i);
 				return array;
 			}
 			else
 				throw new WTelegram.WTException($"Cannot deserialize {type.Name} with ctor #{ctorNb:x}");
 		}
 
-		internal static Dictionary<long, T> ReadTLDictionary<T>(this BinaryReader reader) where T : class, IPeerInfo
+		internal static Dictionary<long, T> ReadTLDictionary<T>(this BinaryReader reader, int layer ) where T : class, IPeerInfo
 		{
 			uint ctorNb = reader.ReadUInt32();
 			var elementType = typeof(T);
@@ -250,12 +268,12 @@ namespace TL
 			var dict = new Dictionary<long, T>(count);
 			for (int i = 0; i < count; i++)
 			{
-				var value = (T)reader.ReadTLValue(elementType);
+				var value = (T)reader.ReadTLValue(elementType, layer);
 				dict[value.ID] = value is UserEmpty ? null : value;
 			}
 			return dict;
 		}
-
+		
 		internal static void WriteTLStamp(this BinaryWriter writer, DateTime datetime)
 			=> writer.Write(datetime == DateTime.MaxValue ? int.MaxValue : (int)(datetime.ToUniversalTime().Ticks / 10000000 - 62135596800L));
 
@@ -357,23 +375,24 @@ namespace TL
 
 	// Below TL types are commented "parsed manually" from https://github.com/telegramdesktop/tdesktop/blob/dev/Telegram/Resources/tl/mtproto.tl
 
-	[TLDef(0x7A19CB76)] //RSA_public_key#7a19cb76 n:bytes e:bytes = RSAPublicKey
+	[TLDef(167,0x7A19CB76)] //RSA_public_key#7a19cb76 n:bytes e:bytes = RSAPublicKey
 	public class RSAPublicKey : IObject
 	{
 		public byte[] n;
 		public byte[] e;
 	}
 
-	[TLDef(0xF35C6D01)] //rpc_result#f35c6d01 req_msg_id:long result:Object = RpcResult
+	[TLDef(167,0xF35C6D01)] //rpc_result#f35c6d01 req_msg_id:long result:Object = RpcResult
 	public class RpcResult : IObject
 	{
 		public long req_msg_id;
 		public object result;
 	}
 
-	[TLDef(0x5BB8E511)] //message#5bb8e511 msg_id:long seqno:int bytes:int body:Object = Message
-	public class _Message
+	[TLDef(167,0x5BB8E511)] //message#5bb8e511 msg_id:long seqno:int bytes:int body:Object = Message
+	public class _Message: IObject
 	{
+		public _Message() {}
 		public _Message(long msgId, int seqNo, IObject obj) { msg_id = msgId; seqno = seqNo; body = obj; }
 		public long msg_id;
 		public int seqno;
@@ -381,11 +400,11 @@ namespace TL
 		public IObject body;
 	}
 
-	[TLDef(0x73F1F8DC)] //msg_container#73f1f8dc messages:vector<%Message> = MessageContainer
+	[TLDef(167,0x73F1F8DC)] //msg_container#73f1f8dc messages:vector<%Message> = MessageContainer
 	public class MsgContainer : IObject { public _Message[] messages; }
-	[TLDef(0xE06046B2)] //msg_copy#e06046b2 orig_message:Message = MessageCopy
+	[TLDef(167,0xE06046B2)] //msg_copy#e06046b2 orig_message:Message = MessageCopy
 	public class MsgCopy : IObject { public _Message orig_message; }
 
-	[TLDef(0x3072CFA1)] //gzip_packed#3072cfa1 packed_data:bytes = Object
+	[TLDef(167,0x3072CFA1)] //gzip_packed#3072cfa1 packed_data:bytes = Object
 	public class GzipPacked : IObject { public byte[] packed_data; }
 }
